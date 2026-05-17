@@ -1,0 +1,84 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Logging Handbook — Local Loki + Grafana stack
+# ─────────────────────────────────────────────────────────────────────────────
+# Spins up a complete log-aggregation stack you can run locally:
+#
+#   • Loki        — log storage backend (indexes labels, not content)
+#   • Grafana     — UI for browsing logs (open http://localhost:3000)
+#   • Alloy       — OpenTelemetry-native collector / log shipper
+#
+# Quick start:
+#     docker compose up -d
+#     # Then run any example, e.g.:
+#     python examples/03_structlog_production.py | tee /tmp/logs/app.log
+#
+# Open Grafana at http://localhost:3000  (admin / admin)
+# A "Loki" datasource is pre-configured.
+# In the Explore tab, run:    {service="logging-handbook"}
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  # Loki — the log storage backend.
+  # Indexes only labels (low-cardinality), not log content.
+  loki:
+    image: grafana/loki:3.2.0
+    container_name: logging-handbook-loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./configs/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+             "http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Grafana — visualization & query UI.
+  # Pre-configured with Loki as a datasource.
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: logging-handbook-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
+    volumes:
+      - ./configs/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      loki:
+        condition: service_healthy
+
+  # Alloy — Grafana's OTel-native collector (replaces Promtail).
+  # Tails ./logs/*.log on the host and ships to Loki.
+  alloy:
+    image: grafana/alloy:v1.5.0
+    container_name: logging-handbook-alloy
+    ports:
+      - "12345:12345"      # Alloy UI
+      - "4317:4317"        # OTLP gRPC
+      - "4318:4318"        # OTLP HTTP
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./configs/alloy-config.alloy:/etc/alloy/config.alloy:ro
+      - ./logs:/var/log/handbook:ro                # mount host log dir
+      - alloy-data:/var/lib/alloy/data
+    depends_on:
+      - loki
+
+volumes:
+  loki-data:
+  grafana-data:
+  alloy-data:

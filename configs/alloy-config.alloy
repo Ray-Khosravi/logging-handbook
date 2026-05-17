@@ -1,0 +1,88 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Grafana Alloy configuration
+// ─────────────────────────────────────────────────────────────────────────────
+// Alloy is Grafana's OpenTelemetry-native collector. It replaces Promtail
+// for log shipping and also accepts OTLP traces & metrics.
+//
+// This config does three things:
+//   1. Tails files in /var/log/handbook (mounted from ./logs on the host)
+//   2. Parses each line as JSON (since our apps emit JSON logs)
+//   3. Ships the parsed events to Loki running in the same compose network
+//
+// Also receives OTLP signals on 4317 (gRPC) and 4318 (HTTP) for examples
+// like 10_llm_opentelemetry.py.
+// ─────────────────────────────────────────────────────────────────────────────
+
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+// ─── Log scraping ─────────────────────────────────────────────────────────
+// Discover files in the mounted host directory
+local.file_match "handbook_logs" {
+  path_targets = [{
+    __path__ = "/var/log/handbook/*.log",
+    job      = "logging-handbook",
+    service  = "logging-handbook",
+  }]
+}
+
+// Tail the discovered files
+loki.source.file "handbook_logs" {
+  targets    = local.file_match.handbook_logs.targets
+  forward_to = [loki.process.parse_json.receiver]
+}
+
+// Parse JSON log lines so the fields become queryable labels/structured metadata
+loki.process "parse_json" {
+  // Extract a few useful fields as labels (keep cardinality low!)
+  stage.json {
+    expressions = {
+      level   = "level",
+      logger  = "logger",
+      event   = "event",
+    }
+  }
+
+  // Promote level to a label so {level="error"} works
+  stage.labels {
+    values = { level = "" }
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+// ─── OTLP receivers (for OpenTelemetry GenAI examples) ───────────────────
+otelcol.receiver.otlp "default" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+  output {
+    traces  = [otelcol.processor.batch.default.input]
+    metrics = [otelcol.processor.batch.default.input]
+    logs    = [otelcol.processor.batch.default.input]
+  }
+}
+
+otelcol.processor.batch "default" {
+  output {
+    // For this local stack, we just send logs to Loki via the OTel exporter.
+    // Traces/metrics would go to Tempo/Mimir in a full setup.
+    logs = [otelcol.exporter.loki.default.input]
+  }
+}
+
+otelcol.exporter.loki "default" {
+  forward_to = [loki.write.default.receiver]
+}
+
+// ─── Loki writer ─────────────────────────────────────────────────────────
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

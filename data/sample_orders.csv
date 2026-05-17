@@ -1,0 +1,11 @@
+id,email,amount,country,signup_date
+1,alice@example.com,49.99,US,2024-03-15
+2,bob@example.com,19.50,DE,2024-07-22
+3,charlie@example.com,129.00,GB,2024-11-08
+4,dana@example.com,8.99,FR,2025-01-14
+5,erin@example.com,299.00,US,2025-02-28
+6,frank@example.com,55.50,CA,2025-04-03
+7,grace@example.com,89.00,AU,2025-05-19
+8,heidi@example.com,12.00,NL,2025-06-30
+9,ivan@example.com,199.99,SE,2025-08-11
+10,judy@example.com,33.33,JP,2025-09-25
